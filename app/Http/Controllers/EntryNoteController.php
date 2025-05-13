@@ -64,10 +64,16 @@ class EntryNoteController extends Controller
                         throw new \Exception("لا يوجد مخزون لهذا المنتج في المستودع المختار.");
                     }
 
+                    // التحقق من وجود كمية كافية في المخزون
+                    if ($stock->quantity < $item['quantity']) {
+                        throw new \Exception("الكمية المطلوبة (".$item['quantity'].") غير متوفرة في المخزون (الكمية المتاحة: ".$stock->quantity.") للمنتج ID: ".$item['product_id']);
+                    }
+ 
+
                     DB::table('stocks')
                         ->where('product_id', $item['product_id'])
                         ->where('warehouse_id', $item['warehouse_id'])
-                        ->increment('quantity', $item['quantity']);
+                        ->decrement('quantity', $item['quantity']);
 
                     EntryNoteItem::create([
                         'entry_note_id' => $entryNote->id,
