@@ -102,7 +102,7 @@ class WarehouseController extends Controller
     {
         $warehouseKeeper = Auth::user(); // أمين المستودع المسجل الدخول
 
-        $warehouses = $warehouseKeeper->warehouse()->get();
+        $warehouses = $warehouseKeeper->warehouses()->get();
 
         if ($warehouses->isEmpty()) {
             return $this->errorResponse(

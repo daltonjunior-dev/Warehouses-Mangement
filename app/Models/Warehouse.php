@@ -14,14 +14,14 @@ class Warehouse extends Model
 
     public function department()
     {
-        // ⚠️ العلاقة الصحيحة: مستودع يملك قسمًا (hasOne)
-        // لاحظ أننا نحدد المفتاح الخارجي والمفتاح المحلي
-        return $this->hasOne(Department::class, 'warehouse_id', 'id');
+        // العلاقة الصحيحة: مستودع له قسم واحد (hasOne)
+        // القسم يحتوي على warehouse_id
+        return $this->hasOne(Department::class, 'warehouse_id');
     }
 
     public function warehouseKeeper()
     {
-        return $this->belongsTo(WarehouseKeeper::class);
+        return $this->belongsTo(WarehouseKeeper::class, 'warehouse_keeper_id');
     }
 
     public function stock()

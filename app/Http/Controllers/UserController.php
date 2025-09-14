@@ -35,7 +35,7 @@ class UserController extends Controller
             $validator = Validator::make($request->all(), [
                 'name' => 'required|string|max:255',
                 'email' => 'sometimes|email|unique:users',
-                'phone' => 'sometimes|string|unique:users',
+                'phone' => 'sometimes|string|unique:users|regex:/^09\d{8}$/',
                 'password' => 'required|string|min:8',
                 'job_title' => 'required|string',
                 'department_id' => 'required|exists:departments,id',
@@ -113,15 +113,15 @@ class UserController extends Controller
             $validator = Validator::make($request->all(), [
                 'name' => 'sometimes|string|max:255',
                 'email' => 'sometimes|email|unique:users,email,'.$id,
-                'phone' => 'sometimes|string|unique:users,phone,'.$id,
+                'phone' => 'sometimes|string|regex:/^09\d{8}$/|unique:users,phone,'.$id,
                 'password' => 'sometimes|string|min:8',
                 'job_title' => 'sometimes|string',
                 'department_id' => 'sometimes|exists:departments,id',
                 'gender'       => 'sometimes|nullable|string',
                 'address'      => 'sometimes|nullable|string',
                 'birth_date'   => 'sometimes|nullable|date',
-                'facebook_url'  => 'sometimes|nullable|url',
-                'instagram_url' => 'sometimes|nullable|url',
+                'facebook_url'  => 'sometimes|nullable|string',
+                'instagram_url' => 'sometimes|nullable|string',
             ]);
 
             if ($validator->fails()) {

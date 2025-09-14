@@ -31,6 +31,15 @@ class InstallationReportController extends Controller
     public function index(Request $request)
     {
         try {
+            $user = $request->user();
+            if (!$user) {
+                return $this->errorResponse(
+                    message: 'غير مصرح بالوصول. يرجى تسجيل الدخول أولاً.',
+                    code: 401,
+                    internalCode: 'UNAUTHORIZED_ACCESS'
+                );
+            }
+
             // فلترة حسب النوع (مع إضافة خيار all)
             $type = $request->query('type', 'all'); // all, stock_usage, purchase
 
@@ -38,7 +47,9 @@ class InstallationReportController extends Controller
                 'materials.product',   // المنتج المرتبط بالمادة
                 'createdBy',           // المستخدم الذي أنشأ التقرير
                 'approvedBy'           // المدير الذي اعتمد التقرير
-            ])->orderBy('date', 'desc');
+            ])
+            ->where('created_by', $user->id) // فلترة حسب المستخدم الحالي
+            ->orderBy('created_at', 'desc'); // ترتيب حسب التاريخ الأحدث
 
             // تطبيق الفلتر إذا لم يكن all
             if ($type !== 'all' && in_array($type, ['stock_usage', 'purchase'])) {
@@ -63,7 +74,7 @@ class InstallationReportController extends Controller
                 }
             }
 
-            // جلب كل النتائج دفعة واحدة
+            // جلب النتائج المخصصة للمستخدم الحالي
             $reports = $query->get();
 
             return $this->successResponse([
@@ -76,7 +87,7 @@ class InstallationReportController extends Controller
                         ['value' => 'purchase', 'label' => 'شراء']
                     ]
                 ]
-            ], 'تم جلب التقارير بنجاح');
+            ], 'تم جلب تقارير التركيب الخاصة بك بنجاح');
 
         } catch (\Exception $e) {
             return $this->errorResponse(
@@ -98,6 +109,175 @@ class InstallationReportController extends Controller
         return $types[$type] ?? 'غير معروف';
     }
 
+    /**
+     * عرض الطلبات المعلقة للمدير الحالي للموافقة عليها
+     */
+    public function pendingReports(Request $request)
+    {
+        try {
+            $user = $request->user();
+            if (!$user) {
+                return $this->errorResponse(
+                    message: 'غير مصرح بالوصول. يرجى تسجيل الدخول أولاً.',
+                    code: 401,
+                    internalCode: 'UNAUTHORIZED_ACCESS'
+                );
+            }
+
+            // فلترة حسب النوع (مع إضافة خيار all)
+            $type = $request->query('type', 'all'); // all, stock_usage, purchase
+
+            $query = InstallationReport::with([
+                'materials.product',   // المنتج المرتبط بالمادة
+                'createdBy',           // المستخدم الذي أنشأ التقرير
+            ])
+            ->where('status', 'pending') // فقط التقارير المعلقة
+            ->whereNull('manager_id')    // التي لم يتم الموافقة عليها بعد
+            ->whereHas('createdBy.warehouses.department', function($query) use ($user) {
+                $query->where('manager_id', $user->id); // فقط التقارير من المستودعات التابعة لهذا المدير
+            })
+            ->orderBy('created_at', 'asc'); // الأقدم أولاً للمراجعة
+
+            // تطبيق الفلتر إذا لم يكن all
+            if ($type !== 'all' && in_array($type, ['stock_usage', 'purchase'])) {
+                $query->where('type', $type);
+            }
+
+            // فلترة حسب التاريخ إذا موجودة
+            if ($request->has('from_date')) {
+                $query->where('date', '>=', $request->from_date);
+            }
+
+            if ($request->has('to_date')) {
+                $query->where('date', '<=', $request->to_date);
+            }
+
+            // جلب النتائج المعلقة للمراجعة
+            $pendingReports = $query->get();
+
+            // إحصائيات مفيدة للمدير
+            $stats = [
+                'total_pending' => $pendingReports->count(),
+                'stock_usage_count' => $pendingReports->where('type', 'stock_usage')->count(),
+                'purchase_count' => $pendingReports->where('type', 'purchase')->count(),
+                'total_estimated_cost' => $pendingReports->sum(function($report) {
+                    return $report->materials->sum('total_price');
+                }),
+            ];
+
+            return $this->successResponse([
+                'pending_reports' => $pendingReports,
+                'statistics' => $stats,
+                'filters' => [
+                    'current_type' => $type,
+                    'available_types' => [
+                        ['value' => 'all', 'label' => 'الكل'],
+                        ['value' => 'stock_usage', 'label' => 'استخدام من المستودع'],
+                        ['value' => 'purchase', 'label' => 'شراء']
+                    ]
+                ]
+            ], 'تم جلب الطلبات المعلقة للمراجعة بنجاح');
+
+        } catch (\Exception $e) {
+            return $this->errorResponse(
+                message: 'فشل في جلب الطلبات المعلقة: ' . $e->getMessage(),
+                code: 500,
+                internalCode: 'PENDING_REPORTS_FETCH_FAILED'
+            );
+        }
+    }
+
+    /**
+     * إحصائيات سريعة للمدير حول حالة الطلبات
+     */
+    public function dashboardStats(Request $request)
+    {
+        try {
+            $user = $request->user();
+            if (!$user) {
+                return $this->errorResponse(
+                    message: 'غير مصرح بالوصول. يرجى تسجيل الدخول أولاً.',
+                    code: 401,
+                    internalCode: 'UNAUTHORIZED_ACCESS'
+                );
+            }
+
+            // إحصائيات عامة
+            $totalReports = InstallationReport::count();
+            $pendingReports = InstallationReport::where('status', 'pending')->count();
+            $approvedReports = InstallationReport::where('status', 'approved')->count();
+            $rejectedReports = InstallationReport::where('status', 'rejected')->count();
+
+            // إحصائيات حسب النوع
+            $stockUsageReports = InstallationReport::where('type', 'stock_usage')->count();
+            $purchaseReports = InstallationReport::where('type', 'purchase')->count();
+
+            // إحصائيات الشهر الحالي
+            $currentMonth = now()->format('Y-m');
+            $thisMonthReports = InstallationReport::whereRaw('DATE_FORMAT(created_at, "%Y-%m") = ?', [$currentMonth])->count();
+            $thisMonthPending = InstallationReport::where('status', 'pending')
+                ->whereRaw('DATE_FORMAT(created_at, "%Y-%m") = ?', [$currentMonth])
+                ->count();
+
+            // أحدث الطلبات المعلقة (5 طلبات)
+            $recentPendingReports = InstallationReport::with(['createdBy', 'materials'])
+                ->where('status', 'pending')
+                ->orderBy('created_at', 'desc')
+                ->limit(5)
+                ->get()
+                ->map(function($report) {
+                    return [
+                        'id' => $report->id,
+                        'serial_number' => $report->serial_number,
+                        'type' => $report->type,
+                        'type_name' => $this->getTypeName($report->type),
+                        'location' => $report->location,
+                        'created_at' => $report->created_at->format('Y-m-d H:i'),
+                        'created_by' => $report->createdBy ? $report->createdBy->name : 'غير معروف',
+                        'materials_count' => $report->materials->count(),
+                        'estimated_cost' => $report->materials->sum('total_price')
+                    ];
+                });
+
+            $stats = [
+                'overview' => [
+                    'total_reports' => $totalReports,
+                    'pending_reports' => $pendingReports,
+                    'approved_reports' => $approvedReports,
+                    'rejected_reports' => $rejectedReports,
+                    'approval_rate' => $totalReports > 0 ? round(($approvedReports / $totalReports) * 100, 2) : 0,
+                ],
+                'by_type' => [
+                    'stock_usage' => $stockUsageReports,
+                    'purchase' => $purchaseReports,
+                ],
+                'current_month' => [
+                    'total_reports' => $thisMonthReports,
+                    'pending_reports' => $thisMonthPending,
+                ],
+                'recent_pending' => $recentPendingReports,
+                'urgency_indicators' => [
+                    'needs_immediate_attention' => $pendingReports > 10,
+                    'pending_over_week' => InstallationReport::where('status', 'pending')
+                        ->where('created_at', '<', now()->subDays(7))
+                        ->count(),
+                ]
+            ];
+
+            return $this->successResponse(
+                $stats,
+                'تم جلب إحصائيات لوحة التحكم بنجاح'
+            );
+
+        } catch (\Exception $e) {
+            return $this->errorResponse(
+                message: 'فشل في جلب إحصائيات لوحة التحكم: ' . $e->getMessage(),
+                code: 500,
+                internalCode: 'DASHBOARD_STATS_FETCH_FAILED'
+            );
+        }
+    }
+
     public function store(Request $request)
     {
         $validator = Validator::make($request->all(), [
@@ -117,12 +297,19 @@ class InstallationReportController extends Controller
             return $this->validationErrorResponse($validator);
         }
 
-
         try {
-            $installationReport = null;
-            $user = Auth::user();
+            $user = $request->user();
+            if (!$user) {
+                return $this->errorResponse(
+                    message: 'غير مصرح بالوصول. يرجى تسجيل الدخول أولاً.',
+                    code: 401,
+                    internalCode: 'UNAUTHORIZED_ACCESS'
+                );
+            }
 
-            DB::transaction(function () use ($request, &$installationReport, $user) {
+            $installationReport = null;
+
+            DB::transaction(function () use ($request, $user, &$installationReport) {
                 // إنشاء التقرير
                 $installationReport = InstallationReport::create([
                     'created_by' => $user->id,
@@ -160,12 +347,12 @@ class InstallationReportController extends Controller
             });
 
             try {
-                //  إيجاد المدير عبر العلاقات: أمين المستودع -> مستودع -> قسم -> مدير
+                // إيجاد المدير عبر العلاقات: أمين المستودع -> مستودع -> قسم -> مدير
                 $warehouseKeeper = WarehouseKeeper::where('id', $user->id)->firstOrFail();
 
                 $warehouseId = $request->warehouse_id ?? null;
 
-                $warehouse = $warehouseKeeper->warehouse()
+                $warehouse = $warehouseKeeper->warehouses()
                     ->when($warehouseId, function ($q) use ($warehouseId) {
                         $q->where('id', $warehouseId);
                     })
@@ -193,7 +380,6 @@ class InstallationReportController extends Controller
                 );
             }
             // 🔔 إشعار المدير
-            //$manager = $installationReport->manager;
             if ($manager && isset($this->notificationService)) {
                 $this->notificationService->notify(
                     $manager,
@@ -220,8 +406,16 @@ class InstallationReportController extends Controller
     public function approve(Request $request, $id)
     {
         try {
+            $user = $request->user();
+            if (!$user) {
+                return $this->errorResponse(
+                    message: 'غير مصرح بالوصول. يرجى تسجيل الدخول أولاً.',
+                    code: 401,
+                    internalCode: 'UNAUTHORIZED_ACCESS'
+                );
+            }
+
             $report = InstallationReport::with('materials')->findOrFail($id);
-            $user = Auth::user();
             $locationMessages = [];
 
             if ($report->status !== 'pending') {
@@ -243,6 +437,9 @@ class InstallationReportController extends Controller
                         }
 
                         $location = $productLocation->location;
+                        if (!$location) {
+                            throw new \Exception("الموقع غير موجود للمنتج '{$product->name}'.");
+                        }
 
                         // خصم الكمية
                         $productLocation->decrement('quantity', $material->quantity);
@@ -277,12 +474,12 @@ class InstallationReportController extends Controller
             });
 
             // 🔔 إشعار للـ warehouseKeeper (المنشئ)
-            $creator =$report->createdBy;
-            if ($creator) {
+            $creator = $report->createdBy;
+            if ($creator && isset($this->notificationService)) {
                 $this->notificationService->notify(
                     $creator,
                     'الموافقة على ضبط تركيب',
-                    'تمت الموافقة على ضبط التركيب الخاص بك (رقم: ' .$report->serial_number . ').',
+                    'تمت الموافقة على ضبط التركيب الخاص بك (رقم: ' . $report->serial_number . ').',
                     'installationReport-request',
                     $report->id
                 );
@@ -308,8 +505,16 @@ class InstallationReportController extends Controller
     public function reject(Request $request, $id)
     {
         try {
+            $user = $request->user();
+            if (!$user) {
+                return $this->errorResponse(
+                    message: 'غير مصرح بالوصول. يرجى تسجيل الدخول أولاً.',
+                    code: 401,
+                    internalCode: 'UNAUTHORIZED_ACCESS'
+                );
+            }
+
             $report = InstallationReport::with('materials')->findOrFail($id);
-            $user = Auth::user();
 
             // 1. التحقق من حالة التقرير (يجب أن يكون قيد الانتظار)
             if ($report->status !== 'pending') {
@@ -331,12 +536,12 @@ class InstallationReportController extends Controller
             });
 
             // 🔔 إشعار للـ warehouseKeeper (المنشئ)
-            $creator =$report->createdBy;
-            if ($creator) {
+            $creator = $report->createdBy;
+            if ($creator && isset($this->notificationService)) {
                 $this->notificationService->notify(
                     $creator,
                     'رفض ضبط تركيب',
-                    'تمت رفض ضبط التركيب الخاص بك (رقم: ' .$report->serial_number . ').',
+                    'تمت رفض ضبط التركيب الخاص بك (رقم: ' . $report->serial_number . ').',
                     'installationReport-request',
                     $report->id
                 );
@@ -362,10 +567,19 @@ class InstallationReportController extends Controller
         return 'IR-' . date('Ymd') . '-' . str_pad(InstallationReport::count() + 1, 4, '0', STR_PAD_LEFT);
     }
 
-    public function show($id)
+    public function show($id, Request $request)
     {
         try {
-            // جلب التقرير مع جميع العلاقات المطلوبة
+            $user = $request->user();
+            if (!$user) {
+                return $this->errorResponse(
+                    message: 'غير مصرح بالوصول. يرجى تسجيل الدخول أولاً.',
+                    code: 401,
+                    internalCode: 'UNAUTHORIZED_ACCESS'
+                );
+            }
+
+            // جلب التقرير مع جميع العلاقات المطلوبة وفلترة حسب المستخدم الحالي
             $report = InstallationReport::with([
                 'materials' => function($query) {
                     $query->select([
@@ -382,7 +596,9 @@ class InstallationReportController extends Controller
                 },
                 'createdBy:id,name,email',
                 'approvedBy:id,name,email'
-            ])->findOrFail($id);
+            ])
+            ->where('created_by', $user->id) // فلترة حسب المستخدم الحالي
+            ->findOrFail($id);
 
             // حساب الإجماليات
             $totalQuantity = $report->materials->sum('quantity');
@@ -435,11 +651,13 @@ class InstallationReportController extends Controller
                 'تم جلب تفاصيل ضبط التركيب بنجاح'
             );
 
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return $this->notFoundResponse('تقرير التركيب غير موجود أو غير مصرح لك بالوصول إليه.');
         } catch (\Exception $e) {
             return $this->errorResponse(
                 message: 'فشل في جلب تفاصيل ضبط التركيب: ' . $e->getMessage(),
-                code: 404,
-                internalCode: 'INSTALLATION_REPORT_NOT_FOUND'
+                code: 500,
+                internalCode: 'INSTALLATION_REPORT_FETCH_FAILED'
             );
         }
     }

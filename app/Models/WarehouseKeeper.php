@@ -23,9 +23,9 @@ class WarehouseKeeper extends Authenticatable
         'instagram_url',
     ];
 
-    public function warehouse()
+    public function warehouses()
     {
-        return $this->hasMany(Warehouse::class);
+        return $this->hasMany(Warehouse::class, 'warehouse_keeper_id');
     }
 
     public function materialRequests()

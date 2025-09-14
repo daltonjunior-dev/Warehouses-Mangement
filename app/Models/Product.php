@@ -70,6 +70,12 @@ class Product extends Model
         return $this->hasMany(ProductMovement::class);
     }
 
+    // الاسم المختصر للعلاقة مع حركات المنتج
+    public function movements()
+    {
+        return $this->hasMany(ProductMovement::class);
+    }
+
     // علاقة: المنتج يمكن أن يتواجد في العديد من المواقع (عبر جدول product_locations)
     public function locations()
     {

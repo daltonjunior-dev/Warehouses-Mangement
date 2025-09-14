@@ -26,18 +26,29 @@ class MaterialRequestController extends Controller
     }
 
 
-    public function index()
+    public function index(Request $request)
     {
         try {
-            $requests = MaterialRequest::with(['manager', 'requestedBy', 'warehouseKeeper'])->get();
+            $user = $request->user();
+            if (!$user) {
+                return $this->errorResponse(
+                    message: 'غير مصرح بالوصول. يرجى تسجيل الدخول أولاً.',
+                    code: 401,
+                    internalCode: 'UNAUTHORIZED_ACCESS'
+                );
+            }
 
-            return $this->successResponse($requests, 'تم جلب المذكرات مع عدد الأصناف بنجاح');
+            // جلب الطلبات الخاصة بالمستخدم الحالي فقط
+            $requests = MaterialRequest::with(['manager', 'requestedBy', 'warehouseKeeper'])
+                ->where('requested_by', $user->id) // فلترة حسب المستخدم الحالي
+                ->orderBy('created_at', 'desc') // ترتيب حسب التاريخ الأحدث
+                ->get();
+
+            return $this->successResponse($requests, 'تم جلب طلبات المواد الخاصة بك بنجاح');
         } catch (\Exception $e) {
             return $this->handleExceptionResponse($e);
         }
     }
-
-
 
     public function store(Request $request)
     {
@@ -117,13 +128,24 @@ class MaterialRequestController extends Controller
     }
 
 
-    public function pendingRequests()
+    public function pendingRequests(Request $request)
     {
         try {
+            $user = $request->user();
+            if (!$user) {
+                return $this->errorResponse(
+                    message: 'غير مصرح بالوصول. يرجى تسجيل الدخول أولاً.',
+                    code: 401,
+                    internalCode: 'UNAUTHORIZED_ACCESS'
+                );
+            }
+
+            // جلب الطلبات المعلقة المرتبطة بالمدير الحالي فقط
             $pendingRequests = MaterialRequest::with(['manager', 'requestedBy', 'warehouseKeeper'])
                 ->withCount('items')
                 ->where('status', 'pending')
-                ->orderBy('created_at', 'desc')
+                ->where('manager_id', $user->id) // فلترة حسب المدير الحالي
+                ->orderBy('created_at', 'desc') // الأحدث أولاً
                 ->get();
 
             $formatted = $pendingRequests->map(function ($r) {
@@ -143,7 +165,7 @@ class MaterialRequestController extends Controller
                 ];
             });
 
-            return $this->successResponse($formatted, 'تم جلب الطلبات المعلقة بنجاح');
+            return $this->successResponse($formatted, 'تم جلب الطلبات المعلقة المرتبطة بك بنجاح');
 
         } catch (\Exception $e) {
             return $this->handleExceptionResponse($e);
@@ -175,7 +197,7 @@ class MaterialRequestController extends Controller
                 ]);
             }
 
-// ✨ إرسال إشعار لليوزر/////////////////
+         // ✨ إرسال إشعار لليوزر/////////////////
             $this->notificationService->notify(
                 $requestModel->requestedBy, // اليوزر يلي قدّم الطلب
                 'تمت الموافقة على طلبك',

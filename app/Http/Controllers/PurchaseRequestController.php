@@ -95,7 +95,7 @@ class PurchaseRequestController extends Controller
 
             $warehouseId = $request->warehouse_id ?? null;
 
-            $warehouse = $warehouseKeeper->warehouse()
+            $warehouse = $warehouseKeeper->warehouses()
                 ->when($warehouseId, function ($q) use ($warehouseId) {
                     $q->where('id', $warehouseId);
                 })
@@ -149,7 +149,7 @@ class PurchaseRequestController extends Controller
                 }
             });
 
-            $purchaseRequest->load(['createdBy.warehouse.department.manager', 'supplier', 'items.product']);
+            $purchaseRequest->load(['createdBy.warehouses.department.manager', 'supplier', 'items.product']);
 
             // 🔔 إشعار للمدير المحدد
             //$manager = $purchaseRequest->manager;

@@ -19,21 +19,22 @@ class EntryNoteController extends Controller
 {
     use ApiResponse;
 
-    // إظهار كل المذكرات
-    public function index()
+    // إظهار مذكرات الإدخال للمستخدم الحالي
+    public function index(Request $request)
     {
         try {
             $notes = EntryNote::withCount('items') // هنا نستخدم withCount بدلاً of with
-
+                ->where('created_by', $request->user()->id) // فلترة حسب المستخدم الحالي
                 ->with([
                     'warehouse',
                     'createdBy',
                     'user',
                     'items.product',  //  تحميل تفاصيل المنتج لكل عنصر إدخال
                 ])
+                ->orderBy('created_at', 'desc') // ترتيب حسب التاريخ الأحدث
                 ->get();
 
-            return $this->successResponse($notes, 'تم جلب المذكرات مع تفاصيل الأصناف والمواقع بنجاح');
+            return $this->successResponse($notes, 'تم جلب مذكرات الإدخال الخاصة بك بنجاح');
         } catch (\Exception $e) {
             return $this->handleExceptionResponse($e);
         }
@@ -120,8 +121,8 @@ class EntryNoteController extends Controller
     }
 
 
-    // إظهار مذكرة محددة
-    public function show($id)
+    // إظهار مذكرة محددة للمستخدم الحالي
+    public function show($id, Request $request)
     {
         try {
             // تحميل العلاقات المتداخلة:
@@ -135,11 +136,12 @@ class EntryNoteController extends Controller
                 'createdBy',
                 'items.product',    // <--- جديد: تحميل تفاصيل المنتج لكل عنصر إدخال
             ])
+                ->where('created_by', $request->user()->id) // فلترة حسب المستخدم الحالي
                 ->findOrFail($id);
             return $this->successResponse($note, 'تم جلب المذكرة بنجاح');
         }catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             // استخدام notFoundResponse لرسائل 404
-            return $this->notFoundResponse('المذكرة غير موجودة.');
+            return $this->notFoundResponse('المذكرة غير موجودة أو غير مصرح لك بالوصول إليها.');
         }catch (\Exception $e) {
             return $this->handleExceptionResponse($e);
         }

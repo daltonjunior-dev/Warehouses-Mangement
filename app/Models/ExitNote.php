@@ -30,6 +30,8 @@ class ExitNote extends Model
 
     public function createdBy()
     {
+        // Check if created_by references WarehouseKeeper or User table based on the application logic
+        // For now, we'll use WarehouseKeeper as per the database migration
         return $this->belongsTo(WarehouseKeeper::class, 'created_by');
     }
 

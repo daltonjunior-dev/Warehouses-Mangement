@@ -21,10 +21,20 @@ class ReceivingNoteController extends Controller
     //
     use ApiResponse;
 
-    // إظهار كل المذكرات
-    public function index()
+    // إظهار كل المذكرات للمستخدم الحالي فقط
+    public function index(Request $request)
     {
         try {
+            $user = $request->user();
+            if (!$user) {
+                return $this->errorResponse(
+                    message: 'غير مصرح بالوصول. يرجى تسجيل الدخول أولاً.',
+                    code: 401,
+                    internalCode: 'UNAUTHORIZED_ACCESS'
+                );
+            }
+
+            // جلب مذكرات الاستلام الخاصة بالمستخدم الحالي فقط
             $notes = ReceivingNote::withCount('items')
                 ->with([
                     'supplier',          // لجلب بيانات المورد المرتبط بالإيصال
@@ -32,11 +42,12 @@ class ReceivingNoteController extends Controller
                     'createdBy',         // لجلب بيانات منشئ الإيصال (أمين المستودع)
                     'items.product',     // لجلب تفاصيل المنتج لكل بند
                 ])
+                ->where('created_by', $user->id) // فلترة حسب المستخدم الحالي
+                ->orderBy('created_at', 'desc') // ترتيب حسب التاريخ الأحدث
                 ->get();
 
-            return $this->successResponse($notes, 'تم جلب الإيصالات بنجاح');
+            return $this->successResponse($notes, 'تم جلب إيصالات الاستلام الخاصة بك بنجاح');
         } catch (\Exception $e) {
-            // الأفضل عرض رسالة الخطأ للمطور في بيئة الاختبار
             return $this->handleExceptionResponse($e);
         }
     }
@@ -134,25 +145,35 @@ class ReceivingNoteController extends Controller
         }
     }
 
-    // إظهار مذكرة محددة مع كل تفاصيلها
-    public function show($id)
+    // إظهار مذكرة محددة مع كل تفاصيلها للمستخدم الحالي
+    public function show($id, Request $request)
     {
         try {
+            $user = $request->user();
+            if (!$user) {
+                return $this->errorResponse(
+                    message: 'غير مصرح بالوصول. يرجى تسجيل الدخول أولاً.',
+                    code: 401,
+                    internalCode: 'UNAUTHORIZED_ACCESS'
+                );
+            }
+
+            // جلب الإيصال الخاص بالمستخدم الحالي فقط
             $note = ReceivingNote::with([
                 'supplier',
                 'purchaseRequest',
                 'createdBy',
                 'items.product',
                 'items.warehouse',
-            ])->findOrFail($id);
+            ])
+            ->where('created_by', $user->id) // فلترة حسب المستخدم الحالي
+            ->findOrFail($id);
 
             return $this->successResponse($note, 'تم جلب بيانات الإيصال بنجاح');
 
         } catch (ModelNotFoundException $e) {
-            // أصبحنا الآن نلتقط الخطأ المحدد بدقة
-            return $this->notFoundResponse('إيصال الاستلام غير موجود');
+            return $this->notFoundResponse('إيصال الاستلام غير موجود أو غير مصرح لك بالوصول إليه.');
         } catch (\Exception $e) {
-            // للتعامل مع أي أخطاء أخرى محتملة
             return $this->handleExceptionResponse($e);
         }
     }

@@ -10,6 +10,7 @@ use App\Http\Controllers\EntryNoteController;
 use App\Http\Controllers\ExitNoteController;
 use App\Http\Controllers\InstallationReportController;
 use App\Http\Controllers\LocationController;
+use App\Http\Controllers\ManagerController;
 use App\Http\Controllers\MaterialRequestController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\ProductController;
@@ -154,6 +155,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/scrapNote/store', [ScrapNoteController::class, 'store']);
     Route::put('scrapNotes/{id}/approve', [ScrapNoteController::class, 'approve']);
     Route::put('scrapNotes/{id}/reject', [ScrapNoteController::class, 'reject']);
+    Route::get('/scrapNotes/pending', [ScrapNoteController::class, 'pendingScrapNotes']);
 
     // InstallationReport
     Route::get('/allInstallationReport',[InstallationReportController::class,'index']);
@@ -161,6 +163,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/installationReport/{id}/reject',[InstallationReportController::class,'reject']);
     Route::get('/InstallationReport/{id}/details',[InstallationReportController::class,'show']);
     Route::post('/InstallationReport/store', [InstallationReportController::class, 'store']);
+    
+    // Installation Reports - Manager Functions
+    Route::get('/pending-installation-reports', [InstallationReportController::class, 'pendingReports']);
+    Route::get('/installation-reports/dashboard-stats', [InstallationReportController::class, 'dashboardStats']);
 
     // product Movement
 
@@ -184,6 +190,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/warehouse-keepers/{id}', [WarehouseKeeperController::class, 'update']);
     Route::put('/warehouse-keepers/update-password/{id}', [WarehouseKeeperController::class, 'updatePassword']);
     Route::get('/warehouse-keeper/me', [WarehouseKeeperController::class, 'show']);
+
+    // MANAGERS
+    Route::put('/managers/{id}', [ManagerController::class, 'update']);
+    Route::put('/managers/update-password/{id}', [ManagerController::class, 'updatePassword']);
+    Route::get('/manager/me', [ManagerController::class, 'show']);
 
     //SUPPLIERS
     Route::get('/suppliers', [SupplierController::class, 'index']);
@@ -210,6 +221,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('product-movements/{productId}/byMonth', [ProductMovementController::class, 'getMovementsByMonth']);
     Route::get('product-movements/{productId}', [ProductMovementController::class, 'showProductMovement']);
     Route::get('products/monthlyBalances', [ProductMovementController::class, 'getMonthlyProductBalances']);
+    Route::get('warehouses/{warehouseId}/product-balances', [ProductMovementController::class, 'getWarehouseProductBalances']);
 
 
     Route::get('/managers',[DepartmentController::class,'indexManager']);

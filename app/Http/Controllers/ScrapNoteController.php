@@ -11,6 +11,7 @@ use App\Models\ProductMovement;
 use App\Models\ScrapNote;
 use App\Models\ScrappedMaterial;
 use App\Models\Stock;
+use App\Models\Warehouse;
 use App\Models\WarehouseKeeper;
 use App\Services\NotificationService;
 use App\Traits\ApiResponse;
@@ -32,16 +33,27 @@ class ScrapNoteController extends Controller
         $this->notificationService = $notificationService;
     }
 
-    // إظهار كل المذكرات
-    public function index()
+    // إظهار مذكرات الإتلاف للمستخدم الحالي
+    public function index(Request $request)
     {
         try {
+            $user = $request->user();
+            if (!$user) {
+                return $this->errorResponse(
+                    message: 'غير مصرح بالوصول. يرجى تسجيل الدخول أولاً.',
+                    code: 401,
+                    internalCode: 'UNAUTHORIZED_ACCESS'
+                );
+            }
+
+            // جلب مذكرات الإتلاف الخاصة بالمستخدم الحالي فقط
             $notes = ScrapNote::with(['materials.product', 'createdBy', 'approvedBy'])
                 ->withCount('materials as materials_count')
-                ->orderBy('created_at', 'desc')
+                ->where('created_by', $user->id) // فلترة حسب المستخدم الحالي
+                ->orderBy('created_at', 'desc') // ترتيب حسب التاريخ الأحدث
                 ->get();
 
-            return $this->successResponse($notes, 'تم جلب المذكرات مع عدد الأصناف بنجاح');
+            return $this->successResponse($notes, 'تم جلب مذكرات الإتلاف الخاصة بك بنجاح');
         } catch (\Exception $e) {
             return $this->handleExceptionResponse($e);
         }
@@ -51,7 +63,7 @@ class ScrapNoteController extends Controller
 
     public function store(Request $request)
     {
-        $user = Auth::user();
+        $user =  $request->user();
 
         $validator = Validator::make($request->all(), [
             'date' => 'required|date',
@@ -100,28 +112,48 @@ class ScrapNoteController extends Controller
             });
 
             try {
-                //  إيجاد المدير عبر العلاقات: أمين المستودع -> مستودع -> قسم -> مدير
-                $warehouseKeeper = WarehouseKeeper::where('id', $user->id)->firstOrFail();
-
-                $warehouseId = $request->warehouse_id ?? null;
-
-                $warehouse = $warehouseKeeper->warehouse()
-                    ->when($warehouseId, function ($q) use ($warehouseId) {
-                        $q->where('id', $warehouseId);
-                    })
+                // إيجاد المدير عبر العلاقات: أمين المستودع -> مستودع -> قسم -> مدير
+                $warehouseKeeper = WarehouseKeeper::with('warehouses.department.manager')
+                    ->where('id', $user->id)
                     ->first();
-                if (!$warehouse) {
-                    throw new \Exception('لا يوجد مستودع مرتبط بأمين المستودع.');
+
+                if (!$warehouseKeeper) {
+                    throw new \Exception('لا يوجد أمين مستودع بهذا المعرف.');
+                }
+
+                // البحث عن المستودع - إما من warehouse_id المرسل أو أول مستودع متاح
+                $warehouseId = $request->warehouse_id ?? null;
+                $warehouse = null;
+
+                if ($warehouseId) {
+                    // البحث عن المستودع المحدد
+                    $warehouse = $warehouseKeeper->warehouses()
+                        ->where('id', $warehouseId)
+                        ->with('department.manager')
+                        ->first();
+                    
+                    if (!$warehouse) {
+                        throw new \Exception('المستودع المحدد غير موجود أو غير مرتبط بك.');
+                    }
+                } else {
+                    // أخذ أول مستودع متاح
+                    $warehouse = $warehouseKeeper->warehouses()
+                        ->with('department.manager')
+                        ->first();
+                    
+                    if (!$warehouse) {
+                        throw new \Exception('لا يوجد مستودع مرتبط بأمين المستودع.');
+                    }
                 }
 
                 $department = $warehouse->department;
                 if (!$department) {
-                    throw new \Exception('لا يوجد قسم مرتبط بالمستودع.');
+                    throw new \Exception('المستودع "' . $warehouse->name . '" غير مرتبط بأي قسم.');
                 }
 
                 $manager = $department->manager;
                 if (!$manager) {
-                    throw new \Exception('لا يوجد مدير مرتبط بالقسم.');
+                    throw new \Exception('القسم "' . $department->name . '" لا يحتوي على مدير.');
                 }
 
             } catch (\Exception $e) {
@@ -170,13 +202,23 @@ class ScrapNoteController extends Controller
 
         try {
             DB::transaction(function () use ($id, $request, $user) {
-                $scrapNote = ScrapNote::with('materials.product')->findOrFail($id);
+                $scrapNote = ScrapNote::with(['materials.product', 'createdBy.warehouses.department'])
+                    ->findOrFail($id);
+
+                // ✅ التحقق من صلاحية المدير - أمان إضافي
+                $hasAuthority = $scrapNote->createdBy->warehouses->contains(function($warehouse) use ($user) {
+                    return $warehouse->department && $warehouse->department->manager_id === $user->id;
+                });
+
+                if (!$hasAuthority) {
+                    throw new \Exception('غير مصرح لك بالموافقة على هذه المذكرة.');
+                }
 
                 if ($scrapNote->status != ScrapNote::STATUS_PENDING) {
                     throw new \Exception('لا يمكن الموافقة على مذكرة تلف غير معلقة.');
                 }
 
-                // الحلقة: تنفيذ الخصومات والتحديثات الفعلية
+                // ... existing code ...
                 foreach ($scrapNote->materials as $material) {
                     $productId = $material->product_id;
 
@@ -191,7 +233,7 @@ class ScrapNoteController extends Controller
 
                     $location = $productLocation->location;
 
-                    // خَصْم الكَمّيَّة
+                    // خَصْم الكَمّيَّة
                     $productLocation->decrement('quantity', $material->quantity);
                     $location->decrement('used_capacity_units', $material->quantity);
 
@@ -289,6 +331,7 @@ class ScrapNoteController extends Controller
             );
         }
     }
+
     public function reject(Request $request, $id)
     {
         $request->validate([
@@ -296,7 +339,25 @@ class ScrapNoteController extends Controller
         ]);
 
         try {
-            $scrapNote = ScrapNote::findOrFail($id);
+            $user = $request->user();
+            if (!$user) {
+                return $this->errorResponse(
+                    message: 'غير مصرح بالوصول. يرجى تسجيل الدخول أولاً.',
+                    code: 401,
+                    internalCode: 'UNAUTHORIZED_ACCESS'
+                );
+            }
+
+            $scrapNote = ScrapNote::with(['createdBy.warehouses.department'])->findOrFail($id);
+
+            // ✅ التحقق من صلاحية المدير - أمان إضافي
+            $hasAuthority = $scrapNote->createdBy->warehouses->contains(function($warehouse) use ($user) {
+                return $warehouse->department && $warehouse->department->manager_id === $user->id;
+            });
+
+            if (!$hasAuthority) {
+                throw new \Exception('غير مصرح لك برفض هذه المذكرة.');
+            }
 
             if ($scrapNote->status != ScrapNote::STATUS_PENDING) {
                 throw new \Exception("لا يمكن رفض طلب غير معلق ");
@@ -332,18 +393,148 @@ class ScrapNoteController extends Controller
         }
     }
 
-    //إظهار مذكرة محددة
-    public function show($id)
+    /**
+     * عرض مذكرات الإتلاف المعلقة للمدير الحالي للموافقة عليها حسب التوكن
+     */
+    public function pendingScrapNotes(Request $request)
     {
         try {
+            $user = $request->user();
+            if (!$user) {
+                return $this->errorResponse(
+                    message: 'غير مصرح بالوصول. يرجى تسجيل الدخول أولاً.',
+                    code: 401,
+                    internalCode: 'UNAUTHORIZED_ACCESS'
+                );
+            }
+
+            // جلب مذكرات الإتلاف المعلقة التي تحتاج موافقة من المدير الحالي
+            $pendingScrapNotes = ScrapNote::with([
+                'materials.product',   // المنتجات المرتبطة بالمواد التالفة
+                'createdBy'            // أمين المستودع الذي أنشأ المذكرة
+            ])
+            ->withCount('materials as materials_count') // عدد المواد في كل مذكرة
+            ->where('status', 'pending') // فقط المذكرات المعلقة
+            ->whereNull('approved_by')   // التي لم يتم الموافقة عليها بعد
+            ->whereHas('createdBy.warehouses.department', function($query) use ($user) {
+                $query->where('manager_id', $user->id); // فقط المذكرات من المستودعات التابعة لهذا المدير
+            })
+            ->orderBy('created_at', 'asc') // الأقدم أولاً للمراجعة
+            ->get();
+
+            // تنسيق البيانات للعرض
+            $formattedNotes = $pendingScrapNotes->map(function ($note) {
+                return [
+                    'id' => $note->id,
+                    'serial_number' => $note->serial_number,
+                    'date' => $note->date,
+                    'created_at' => $note->created_at->format('Y-m-d H:i'),
+                    'created_by' => [
+                        'id' => $note->createdBy->id,
+                        'name' => $note->createdBy->name
+                    ],
+                    'reason' => $note->reason,
+                    'notes' => $note->notes,
+                    'materials_count' => $note->materials_count,
+                    'materials' => $note->materials->map(function ($material) {
+                        return [
+                            'id' => $material->id,
+                            'product_name' => $material->product->name,
+                            'quantity' => $material->quantity,
+                            'unit' => $material->product->unit,
+                            'notes' => $material->notes
+                        ];
+                    }),
+                    'status' => $note->status,
+                    'priority' => $this->calculatePriority($note->created_at),
+                    'priority_label' => $this->getPriorityLabel($this->calculatePriority($note->created_at)),
+                    'days_pending' => now()->diffInDays($note->created_at)
+                ];
+            });
+
+            // إحصائيات سريعة
+            $statistics = [
+                'total_pending' => $formattedNotes->count(),
+                'high_priority' => $formattedNotes->where('priority', '>=', 3)->count(),
+                'medium_priority' => $formattedNotes->where('priority', '=', 2)->count(),
+                'low_priority' => $formattedNotes->where('priority', '=', 1)->count(),
+                'total_materials' => $pendingScrapNotes->sum('materials_count')
+            ];
+
+            return $this->successResponse([
+                'scrap_notes' => $formattedNotes,
+                'statistics' => $statistics
+            ], 'تم جلب مذكرات الإتلاف المعلقة بنجاح');
+
+        } catch (\Exception $e) {
+            return $this->errorResponse(
+                message: 'فشل في جلب مذكرات الإتلاف المعلقة: ' . $e->getMessage(),
+                code: 500,
+                internalCode: 'PENDING_SCRAP_NOTES_FETCH_FAILED'
+            );
+        }
+    }
+
+    /**
+     * حساب أولوية المذكرة بناءً على عمرها
+     */
+    private function calculatePriority($createdAt)
+    {
+        $daysOld = now()->diffInDays($createdAt);
+
+        if ($daysOld >= 3) {
+            return 4; // أولوية عالية جداً
+        } elseif ($daysOld >= 2) {
+            return 3; // أولوية عالية
+        } elseif ($daysOld >= 1) {
+            return 2; // أولوية متوسطة
+        } else {
+            return 1; // أولوية منخفضة
+        }
+    }
+
+    /**
+     * الحصول على تسمية الأولوية
+     */
+    private function getPriorityLabel($priority)
+    {
+        $labels = [
+            1 => 'منخفضة',
+            2 => 'متوسطة',
+            3 => 'عالية',
+            4 => 'عالية جداً'
+        ];
+
+        return $labels[$priority] ?? 'غير محدد';
+    }
+
+    //إظهار مذكرة محددة للمستخدم الحالي
+    public function show($id, Request $request)
+    {
+        try {
+            $user = $request->user();
+            if (!$user) {
+                return $this->errorResponse(
+                    message: 'غير مصرح بالوصول. يرجى تسجيل الدخول أولاً.',
+                    code: 401,
+                    internalCode: 'UNAUTHORIZED_ACCESS'
+                );
+            }
+
+            // جلب المذكرة الخاصة بالمستخدم الحالي فقط
             $note = ScrapNote::with([
                 'materials.product', // تحميل المواد مع معلومات المنتج
                 'createdBy:id,name', // معلومات منشئ المذكرة
                 'approvedBy:id,name' // معلومات الموافق (إذا موجود)
-            ])->findOrFail($id);
+            ])
+            ->where('created_by', $user->id) // فلترة حسب المستخدم الحالي
+            ->findOrFail($id);
+
             return $this->successResponse($note, 'تم جلب المذكرة بنجاح');
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return $this->notFoundResponse('مذكرة الإتلاف غير موجودة أو غير مصرح لك بالوصول إليها.');
         } catch (\Exception $e) {
-            return $this->handleExceptionResponse($e, 'المذكرة غير موجودة');
+            return $this->handleExceptionResponse($e, 'فشل في جلب المذكرة');
         }
     }
 
@@ -381,39 +572,5 @@ class ScrapNoteController extends Controller
 
         return "($folderNumber/$noteNumber)";
     }
-
-    protected function generateSerialNumberPM()
-    {
-        $currentYear = date('Y');
-
-        // الحصول على آخر مذكرة لهذه السنة
-        $lastEntry = ProductMovement::whereYear('created_at', $currentYear)
-            ->orderBy('id', 'desc')
-            ->first();
-
-        // تحديد الأرقام الجديدة
-        if (!$lastEntry) {
-            // أول مذكرة في السنة
-            $folderNumber = 1;
-            $noteNumber = 1;
-        } else {
-            // فك الترميز من السيريال السابق
-            $serial = trim($lastEntry->reference_serial, '()');
-            list($lastFolderNumber, $lastNoteNumber) = explode('/', $serial);
-
-            $lastFolderNumber = (int)$lastFolderNumber;
-            $lastNoteNumber = (int)$lastNoteNumber;
-
-            // حساب الأرقام الجديدة
-            $noteNumber = $lastNoteNumber + 1;
-            $folderNumber = $lastFolderNumber;
-
-            if ($noteNumber % 50 == 1 && $noteNumber > 50) {
-                $folderNumber = floor($noteNumber / 50) + 1;
-            }
-        }
-
-        return "($folderNumber/$noteNumber)";
-}
 
 }
