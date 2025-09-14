@@ -37,7 +37,6 @@ class ExitNoteController extends Controller
                 ->with([
                     'warehouse',    //   علاقة المستودع
                     'createdBy',
-                           //   علاقة المستخدم
                     'items.product',  //   تحميل تفاصيل المنتج لكل عنصر إخراج
                 ])
                 ->orderBy('created_at', 'desc') // ترتيب حسب التاريخ الأحدث
@@ -262,7 +261,6 @@ class ExitNoteController extends Controller
             $note = ExitNote::with([
                 'warehouse',    // <--- إضافة: تحميل المستودع
                 'createdBy',
-
                 'items.product',    // <--- جديد: تحميل تفاصيل المنتج لكل عنصر إخراج
                   // <--- جديد: تحميل تفاصيل الموقع لكل عنصر إخراج
             ])
