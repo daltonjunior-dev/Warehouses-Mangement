@@ -236,7 +236,7 @@ System                 → notifications, personal_access_tokens, sessions
 
 ## 👨‍💻 Author
 
-**Hadi MG** — Backend Developer & System Designer
+**Hadi Al-Gafer** — Backend Developer & System Designer
 
 - 🎓 4th Year Computer Science Student — AI Specialization
 - 🔧 Designed and led the backend architecture for this project
@@ -244,6 +244,13 @@ System                 → notifications, personal_access_tokens, sessions
 
 [![GitHub](https://img.shields.io/badge/GitHub-MG22Hadi-181717?style=flat&logo=github)](https://github.com/MG22Hadi)
 
+**Nour Hais** — Backend Developer & System Designer
+
+- 🎓 4th Year Computer Science Student — AI Specialization
+- 🔧 Designed and led the backend architecture for this project
+- 💼 Skilled in Laravel, RESTful API design, and database modeling
+
+[![GitHub](https://img.shields.io/badge/GitHub-nourahaies-181717?style=flat&logo=github)](https://github.com/nourahaies)
 ---
 
 ## 📄 License
