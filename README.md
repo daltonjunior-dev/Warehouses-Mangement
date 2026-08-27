@@ -244,7 +244,7 @@ System                 → notifications, personal_access_tokens, sessions
 
 [![GitHub](https://img.shields.io/badge/GitHub-MG22Hadi-181717?style=flat&logo=github)](https://github.com/MG22Hadi)
 
-**Nour Hais** — Backend Developer & System Designer
+**Nour Haies** — Backend Developer & System Designer
 
 - 🎓 4th Year Computer Science Student — AI Specialization
 - 🔧 Designed and led the backend architecture for this project
